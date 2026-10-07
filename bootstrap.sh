@@ -24,7 +24,7 @@ loop_for_file() {
 
 export DEBIAN_FRONTEND=noninteractive
 "${SUDO[@]}" apt-get update
-"${SUDO[@]}" apt-get install -y docker.io docker-compose-v2 docker-buildx mdadm lvm2
+"${SUDO[@]}" apt-get install -y docker.io docker-compose-v2 docker-buildx nginx openssl mdadm lvm2 curl
 "${SUDO[@]}" systemctl enable --now docker
 
 "${SUDO[@]}" mkdir -p "$LAB_DIR" /mnt/raid /mnt/logs
@@ -73,11 +73,44 @@ if ! mountpoint -q /mnt/logs; then
 fi
 
 cd "$PROJECT_DIR"
-"${SUDO[@]}" docker compose up -d --build
+"${SUDO[@]}" systemctl stop my-app 2>/dev/null || true
+"${SUDO[@]}" docker rm -f my-app >/dev/null 2>&1 || true
+"${SUDO[@]}" docker compose build
+"${SUDO[@]}" docker compose up -d --force-recreate
 
-printf '\nПроверка хранилища:\n'
+if ! "${SUDO[@]}" test -f /etc/ssl/private/my-app.key \
+    || ! "${SUDO[@]}" test -f /etc/ssl/certs/my-app.crt; then
+    "${SUDO[@]}" openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout /etc/ssl/private/my-app.key \
+        -out /etc/ssl/certs/my-app.crt \
+        -subj "/CN=my-app.local"
+fi
+
+"${SUDO[@]}" install -m 0644 deploy/nginx-my-app.conf /etc/nginx/sites-available/my-app
+"${SUDO[@]}" ln -sfn /etc/nginx/sites-available/my-app /etc/nginx/sites-enabled/my-app
+"${SUDO[@]}" rm -f /etc/nginx/sites-enabled/default
+"${SUDO[@]}" nginx -t
+"${SUDO[@]}" systemctl enable --now nginx
+"${SUDO[@]}" systemctl reload nginx
+
+"${SUDO[@]}" install -m 0644 deploy/my-app.service /etc/systemd/system/my-app.service
+"${SUDO[@]}" systemctl daemon-reload
+"${SUDO[@]}" systemctl enable my-app
+"${SUDO[@]}" docker stop my-app >/dev/null
+"${SUDO[@]}" systemctl restart my-app
+sleep 6
+
+curl --fail --silent --show-error http://127.0.0.1:8080/monitor.log >/dev/null
+curl --fail --insecure --silent --show-error https://127.0.0.1/monitor.log >/dev/null
+
+printf '\nГотово. Проверка хранилища:\n'
 cat /proc/mdstat
 "${SUDO[@]}" pvs
 "${SUDO[@]}" vgs
 "${SUDO[@]}" lvs
 df -h /mnt/raid /mnt/logs
+
+printf '\nПроверка сервиса:\n'
+"${SUDO[@]}" nginx -t
+curl -kI https://127.0.0.1/monitor.log
+"${SUDO[@]}" systemctl --no-pager --full status my-app

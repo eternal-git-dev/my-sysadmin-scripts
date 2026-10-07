@@ -1,0 +1,14 @@
+[Unit]
+Description=Resource monitor container
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/docker start -a my-app
+ExecStop=/usr/bin/docker stop -t 10 my-app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
